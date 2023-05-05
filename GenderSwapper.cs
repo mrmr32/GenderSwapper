@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 
 namespace JustAnotherUser {
     public class GenderSwapper : MVRScript, SkinToDefaultTextures {
-        private static readonly string VERSION = "0.2";
+        private static readonly string VERSION = "0.3";
         private static readonly int UUID_LENGTH = 8;
 
         public static readonly int DIFFUSE_TEXTURE = 0,
@@ -351,9 +351,10 @@ namespace JustAnotherUser {
             if (morphsOnOtherGenderJSON.Count > 0) geometry[this._destiny.isMale ? "useFemaleMorphsOnMale" : "useMaleMorphsOnFemale"].AsBool = true;
             this.SetCharacterJSON(geometry);
 
-            /*foreach (DAZMorph morph in this.morphs) {
-                MorphHelper.SetMorphValue(morph, MorphHelper.GetDefaults())
-            }*/
+            // sometimes (besides explicitally telling the morphs in the JSON) some extra morphs are added; remove those
+            foreach (DAZMorph morph in this.morphs) {
+                if (MorphHelper.GetMorphValue(morph) != 0 && !result.ContainsKey(morph.uid)) MorphHelper.SetMorphValue(morph, 0);
+            }
         }
         
         private IEnumerator LoadDecalMaker(float progress = 0f, bool retryIfFail = false) {
