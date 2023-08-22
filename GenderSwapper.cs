@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 
 namespace JustAnotherUser {
     public class GenderSwapper : MVRScript, SkinToDefaultTextures {
-        private static readonly string VERSION = "0.3";
+        private static readonly string VERSION = "0.4";
         private static readonly int UUID_LENGTH = 8;
 
         public static readonly int DIFFUSE_TEXTURE = 0,
@@ -91,7 +91,8 @@ namespace JustAnotherUser {
             }, true);
 
             // TODO add scene name instead of random
-            this._baseName = GetRandomName(UUID_LENGTH) + "_" + containingAtom.name;
+            Regex rgx = new Regex("[^a-zA-Z0-9]");
+            this._baseName = GetRandomName(UUID_LENGTH) + "_" + rgx.Replace(containingAtom.name, "");
         }
 
         protected void Start() {
@@ -102,7 +103,7 @@ namespace JustAnotherUser {
             }
             this._decalmakerStorable = containingAtom.GetStorableByID(decalMakerId);
 
-            UVData.Load();
+            UVData.Load(this);
 
             StartCoroutine(LoadDataOnceAllFinishes());
 
@@ -154,6 +155,7 @@ namespace JustAnotherUser {
             LoadOriginTexturesIntoDecalMaker(decalMaker, decalVersion, "face", origin.head, progress);
             LoadOriginTexturesIntoDecalMaker(decalMaker, decalVersion, "torso", origin.torso, progress);
             LoadOriginTexturesIntoDecalMaker(decalMaker, decalVersion, "limbs", origin.limbs, progress);
+            LoadOriginTexturesIntoDecalMaker(decalMaker, decalVersion, "genitals", origin.genitals, progress);
         }
 
         public static void LoadOriginTexturesIntoDecalMaker(JSONClass decalMaker, int decalVersion, string part, Texture originTextureOfPart, float progress) {
@@ -211,7 +213,7 @@ namespace JustAnotherUser {
             string prefix = "Alpha";
             // @ref got from BodyRegionEnum and MatSlotEnum
             string materialSlot = "_DecalTex"; // only decal has alpha value
-            foreach (string textureSlot in new String[] { "torso", "face", "limbs" }) {
+            foreach (string textureSlot in new String[] { "torso", "face", "limbs", "genitals" }) {
                 JSONArray textures = decalMaker[materialSlot][textureSlot].AsArray;
                 foreach (JSONClass sliderClass in new JSONClass[]
                              { GetClassWithinArray(textures, "swpD"), GetClassWithinArray(textures, "swpR") }) {
@@ -488,53 +490,105 @@ namespace JustAnotherUser {
             transformedTexture.head = new Texture();
             transformedTexture.torso = new Texture();
             transformedTexture.limbs = new Texture();
+            transformedTexture.genitals = new Texture();
 
             // we'll have to convert as many textures as `AtomTexture` holds
             foreach (KeyValuePair<Texture, int> texture in textureToTransform.GetTextures()) {
                 int region = texture.Value;
-                foreach (KeyValuePair<string, int> tex in texture.Key.GetTextures()) {
-                    string texturePath = tex.Key;
-                    int typeOfTexture = tex.Value;
-
+                if (region == AtomTexture.GENITALS_REGION) {
+                    // genitals only need the torso
+                    // @pre yielded & converted torso
+                    string femaleTorso = (intoMale) ? textureToTransform.torso.diffuse : transformedTexture.torso.diffuse;
+                    if (femaleTorso.Length == 0) {
+                        SuperController.LogMessage("Diffuse torso not set; couldn't generate genitals.");
+                        continue;
+                    }
 
                     Texture2D originalTexture = new Texture2D(1, 1); // it will be changed later by `ImageConversion.LoadImage`
 
                     try {
-                        SuperController.LogMessage("Converting image '" + texturePath + "'...");
-
-                        // get the new image
-                        byte[] originalData = FileManagerSecure.ReadAllBytes(texturePath);
+                        // get the torso
+                        byte[] originalData = FileManagerSecure.ReadAllBytes(femaleTorso);
                         ImageConversion.LoadImage(originalTexture, originalData);
+
+                        // generate the genitals
+                        IEnumerable<GenitalsHelper.GenitalsTexture> genitals = (intoMale) ? GenitalsHelper.LoadMaleGenitals(originalTexture) : GenitalsHelper.LoadFemaleGenitals(originalTexture);
+
+                        foreach (GenitalsHelper.GenitalsTexture text in genitals) {
+                            int typeNum;
+                            if (text.typeOfTexture == "diffuse") typeNum = DIFFUSE_TEXTURE;
+                            else if (text.typeOfTexture == "specular") typeNum = SPECULAR_TEXTURE;
+                            else if (text.typeOfTexture == "normal") typeNum = NORMAL_TEXTURE;
+                            else typeNum = GLOSS_TEXTURE;
+
+                            // get the output path
+                            // @ref CUAManager
+                            string filePath = CUAManagerPath.Combine(folder, baseOutFileName + "-" + region.ToString() + "_" + typeNum.ToString() + ".png");
+                
+                            // convert the output image back into bytes
+                            byte[] image = ImageConversion.EncodeToPNG(text.texture);
+                
+                            // write the output image
+                            FileManagerSecure.WriteAllBytes(filePath, image);
+                
+                            if (FileManagerSecure.FileExists(filePath)) {
+                                SuperController.LogMessage("Generated " + text.typeOfTexture + " genital texture '" + filePath + "'.");
+                                transformedTexture.GetTexture(region).SetTexture(typeNum, filePath);
+                            }
+                            else {
+                                SuperController.LogError("Error while generating " + text.typeOfTexture + " genital texture.");
+                            }
+                        }
                     } catch (Exception ex) {
                         SuperController.LogError(ex.ToString());
                     }
+                }
+                else {
+                    // head/torso/limbs
+                    foreach (KeyValuePair<string, int> tex in texture.Key.GetTextures()) {
+                        string texturePath = tex.Key;
+                        int typeOfTexture = tex.Value;
 
-                    // wait the UVData to finish loading
-                    yield return new WaitUntil(() => UVData.IsLoaded());
 
-                    try {
-                        // distort the image
-                        Texture2D targetTexture = UVData.DeformUVs(originalTexture, !intoMale, region);
+                        Texture2D originalTexture = new Texture2D(1, 1); // it will be changed later by `ImageConversion.LoadImage`
 
-                        // get the output path
-                        // @ref CUAManager
-                        string filePath = CUAManagerPath.Combine(folder, baseOutFileName + "-" + region.ToString() + "_" + typeOfTexture.ToString() + ".png");
-                
-                        // convert the output image back into bytes
-                        byte[] image = ImageConversion.EncodeToPNG(targetTexture);
-                
-                        // write the output image
-                        FileManagerSecure.WriteAllBytes(filePath, image);
-                
-                        if (FileManagerSecure.FileExists(filePath)) {
-                            SuperController.LogMessage("Image '" + texturePath + "' converted as '" + filePath + "'.");
-                            transformedTexture.GetTexture(region).SetTexture(typeOfTexture, filePath);
+                        try {
+                            SuperController.LogMessage("Converting image '" + texturePath + "'...");
+
+                            // get the new image
+                            byte[] originalData = FileManagerSecure.ReadAllBytes(texturePath);
+                            ImageConversion.LoadImage(originalTexture, originalData);
+                        } catch (Exception ex) {
+                            SuperController.LogError(ex.ToString());
                         }
-                        else {
-                            SuperController.LogError("Error while converting image '" + texturePath + "'");
+
+                        // wait the UVData to finish loading
+                        yield return new WaitUntil(() => UVData.IsLoaded());
+
+                        try {
+                            // distort the image
+                            Texture2D targetTexture = UVData.DeformUVs(originalTexture, !intoMale, region);
+
+                            // get the output path
+                            // @ref CUAManager
+                            string filePath = CUAManagerPath.Combine(folder, baseOutFileName + "-" + region.ToString() + "_" + typeOfTexture.ToString() + ".png");
+                
+                            // convert the output image back into bytes
+                            byte[] image = ImageConversion.EncodeToPNG(targetTexture);
+                
+                            // write the output image
+                            FileManagerSecure.WriteAllBytes(filePath, image);
+                
+                            if (FileManagerSecure.FileExists(filePath)) {
+                                SuperController.LogMessage("Image '" + texturePath + "' converted as '" + filePath + "'.");
+                                transformedTexture.GetTexture(region).SetTexture(typeOfTexture, filePath);
+                            }
+                            else {
+                                SuperController.LogError("Error while converting image '" + texturePath + "'");
+                            }
+                        } catch (Exception ex) {
+                            SuperController.LogError(ex.ToString());
                         }
-                    } catch (Exception ex) {
-                        SuperController.LogError(ex.ToString());
                     }
                 }
             }

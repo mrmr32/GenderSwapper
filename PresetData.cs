@@ -55,9 +55,12 @@ namespace JustAnotherUser {
     }
 
     public class AtomTexture {
+        public static readonly int GENITALS_REGION = 3;
+
         public Texture head;
         public Texture torso;
         public Texture limbs;
+        public Texture genitals;
 
         public bool isValid {
             get {
@@ -72,13 +75,15 @@ namespace JustAnotherUser {
 
             return "- Head -\n" + this.head.ToString() +
                 "\n\n- Torso -\n" + this.torso.ToString() +
-                "\n\n- Limb -\n" + this.limbs.ToString();
+                "\n\n- Limbs -\n" + this.limbs.ToString() +
+                "\n\n- Genitals -\n" + this.genitals.ToString();
         }
 
         public IEnumerable<KeyValuePair<Texture,int>> GetTextures() {
             yield return new KeyValuePair<Texture, int>(this.head, UVData.FACE_REGION);
             yield return new KeyValuePair<Texture, int>(this.torso, UVData.TORSO_REGION);
             yield return new KeyValuePair<Texture, int>(this.limbs, UVData.LIMBS_REGION);
+            yield return new KeyValuePair<Texture, int>(this.genitals, AtomTexture.GENITALS_REGION);
         }
 
         public Texture GetTexture(int index) {
@@ -92,6 +97,7 @@ namespace JustAnotherUser {
             if (index == UVData.FACE_REGION) this.head = value;
             else if (index == UVData.TORSO_REGION) this.torso = value;
             else if (index == UVData.LIMBS_REGION) this.limbs = value;
+            else if (index == AtomTexture.GENITALS_REGION) this.genitals = value;
             else throw new IndexOutOfRangeException("Invalid index");
         }
     }
@@ -171,6 +177,7 @@ namespace JustAnotherUser {
             r["head"] = PresetData.GetJSON(atomTexture.head);
             r["torso"] = PresetData.GetJSON(atomTexture.torso);
             r["limbs"] = PresetData.GetJSON(atomTexture.limbs);
+            r["genitals"] = PresetData.GetJSON(atomTexture.genitals);
 
             return r;
         }
@@ -207,8 +214,9 @@ namespace JustAnotherUser {
             r.head = PresetData.RestoreTextureFromJSON(jc["head"].AsObject, checkIfFilesExist);
             r.torso = PresetData.RestoreTextureFromJSON(jc["torso"].AsObject, checkIfFilesExist);
             r.limbs = PresetData.RestoreTextureFromJSON(jc["limbs"].AsObject, checkIfFilesExist);
+            r.genitals = PresetData.RestoreTextureFromJSON(jc["genitals"].AsObject, checkIfFilesExist);
 
-            if (r.head == null || r.torso == null || r.limbs == null) {
+            if (r.head == null || r.torso == null || r.limbs == null || r.genitals == null) {
                 // file check failed
                 SuperController.LogMessage("A texture was saved on GenderSwapper atom, but it wasn't found. Invalidating that texture...");
                 return null;
@@ -291,6 +299,11 @@ namespace JustAnotherUser {
             if (this.texture.limbs.gloss.Length > 0) textures["limbsGlossUrl"] = this.texture.limbs.gloss;
             if (this.texture.limbs.normal.Length > 0) textures["limbsNormalUrl"] = this.texture.limbs.normal;
             if (this.texture.limbs.decal.Length > 0) textures["limbsDecalUrl"] = this.texture.limbs.decal;
+            if (this.texture.genitals.diffuse.Length > 0) textures["genitalsDiffuseUrl"] = this.texture.genitals.diffuse;
+            if (this.texture.genitals.specular.Length > 0) textures["genitalsSpecularUrl"] = this.texture.genitals.specular;
+            if (this.texture.genitals.gloss.Length > 0) textures["genitalsGlossUrl"] = this.texture.genitals.gloss;
+            if (this.texture.genitals.normal.Length > 0) textures["genitalsNormalUrl"] = this.texture.genitals.normal;
+            if (this.texture.genitals.decal.Length > 0) textures["genitalsDecalUrl"] = this.texture.genitals.decal;
         }
 
         public void RestoreFromAppearancePreset(string name, JSONClass jc) {
@@ -327,6 +340,7 @@ namespace JustAnotherUser {
             r.head = new Texture();
             r.torso = new Texture();
             r.limbs = new Texture();
+            r.genitals = new Texture();
 
             // TODO if no value grab the skin default
             if (jc == null) return r; // all textures to default?
@@ -348,6 +362,12 @@ namespace JustAnotherUser {
             r.limbs.gloss = jc["limbsGlossUrl"].Value;
             r.limbs.normal = jc["limbsNormalUrl"].Value;
             r.limbs.decal = jc["limbsDecalUrl"].Value;
+
+            r.genitals.diffuse = jc["genitalsDiffuseUrl"].Value;
+            r.genitals.specular = jc["genitalsSpecularUrl"].Value;
+            r.genitals.gloss = jc["genitalsGlossUrl"].Value;
+            r.genitals.normal = jc["genitalsNormalUrl"].Value;
+            r.genitals.decal = jc["genitalsDecalUrl"].Value;
 
             return r;
         }
