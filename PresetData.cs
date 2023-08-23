@@ -102,6 +102,18 @@ namespace JustAnotherUser {
         }
     }
 
+    public class MorphValue {
+        public string id { get; private set; }
+        public float value { get; private set; }
+        public bool isMaleMorph { get; private set; }
+
+        public MorphValue(string id, float value, bool isMaleMorph) {
+            this.id = id;
+            this.value = value;
+            this.isMaleMorph = isMaleMorph;
+        }
+    }
+
     public class PresetData {
         public string name { get; private set; }
 
@@ -121,9 +133,18 @@ namespace JustAnotherUser {
         // TODO you can set tiles to irises
         public string iris { get; private set; }
 
-        public Dictionary<string, float> morphs { get; private set; }
+        public List<MorphValue> morphs { get; private set; }
 
-        public Dictionary<string, bool> isMaleMorph { get; private set; }
+        public Dictionary<string, bool> isMaleMorph {
+            get {
+                Dictionary<string, bool> r = new Dictionary<string, bool>();
+                foreach (MorphValue morph in this.morphs) {
+                    if (r.ContainsKey(morph.id)) SuperController.LogError("Warning: calling `isMaleMorph` while there's duplicates morphs (" + morph.id + ")");
+                    r[morph.id] = morph.isMaleMorph;
+                }
+                return r;
+            }
+        }
 
         public bool isValid {
             get {
@@ -144,8 +165,7 @@ namespace JustAnotherUser {
             this.iris = "";
             this.maleTexture = null; // no texture applied yet
             this.femaleTexture = null;
-            this.morphs = new Dictionary<string, float>();
-            this.isMaleMorph = new Dictionary<string, bool>();
+            this.morphs = new List<MorphValue>();
         }
 
         /**
@@ -161,12 +181,15 @@ namespace JustAnotherUser {
             if (this.femaleTexture != null) r["femaleTexture"] = PresetData.GetJSON(this.femaleTexture);
             r["skin"] = this.skin;
             r["iris"] = this.iris;
-            JSONClass morphs = new JSONClass();
-            foreach (var morph in this.morphs) morphs[morph.Key].AsFloat = morph.Value;
+            JSONArray morphs = new JSONArray();
+            foreach (var morph in this.morphs) {
+                JSONClass m = new JSONClass();
+                m["id"] = morph.id;
+                m["value"].AsFloat =  morph.value;
+                m["isMaleMorph"].AsBool = morph.isMaleMorph;
+                morphs.Add(m);
+            }
             r["morphs"] = morphs;
-            JSONClass morphsGender = new JSONClass();
-            foreach (var morph in this.isMaleMorph) morphsGender[morph.Key] = (morph.Value ? "male" : "female");
-            r["morphsGender"] = morphsGender;
 
             return r;
         }
@@ -202,10 +225,8 @@ namespace JustAnotherUser {
             this.femaleTexture = (!jc.HasKey("femaleTexture") ? null : PresetData.RestoreAtomTextureFromJSON(jc["femaleTexture"].AsObject, checkIfFilesExist: this.isMale));
             this.skin = jc["skin"].Value;
             this.iris = jc["iris"].Value;
-            this.morphs = new Dictionary<string, float>();
-            foreach (KeyValuePair<string, JSONNode> entry in jc["morphs"].AsObject) this.morphs[entry.Key] = entry.Value.AsFloat;
-            this.isMaleMorph = new Dictionary<string, bool>();
-            foreach (KeyValuePair<string, JSONNode> entry in jc["morphsGender"].AsObject) this.isMaleMorph[entry.Key] = entry.Value.Value.Equals("male");
+            this.morphs = new List<MorphValue>();
+            foreach (JSONClass entry in jc["morphs"].AsArray) this.morphs.Add(new MorphValue(entry["id"], entry["value"].AsFloat, entry["isMaleMorph"].AsBool));
         }
 
         public static AtomTexture RestoreAtomTextureFromJSON(JSONClass jc, bool checkIfFilesExist = false) {
@@ -251,10 +272,10 @@ namespace JustAnotherUser {
          * @param useOtherSexMorphs: Activate useXMorphsOnY
          * @return Modified atom /!\ WITHOUT MORPHS /!\
          **/
-        public void LoadGeometryToAtom(JSONClass geometry, bool useOtherSexMorphs = false) {
+        public void LoadGeometryToAtom(DAZCharacterSelector selector, bool useOtherSexMorphs = false) {
             if (!this.isValid) return;
 
-            geometry["character"] = this.skin;
+            selector.SelectCharacterByName(this.skin, true);
             
             // useFemaleMorphsOnMale & useMaleMorphsOnFemale applied at `LoadMorphs`
             /*geometry["useFemaleMorphsOnMale"].AsBool = false;
@@ -262,9 +283,6 @@ namespace JustAnotherUser {
             if (useOtherSexMorphs) geometry[this.isMale ? "useFemaleMorphsOnMale" : "useMaleMorphsOnFemale"].AsBool = true;*/
 
             // TODO hair
-
-            geometry["morphs"] = new JSONArray(); // we need the morph UUID; it has to be loaded after
-            geometry["morphsOtherGender"] = new JSONArray();
 
             // TODO iris
             /*if (this.iris.Length > 0) {
@@ -321,15 +339,12 @@ namespace JustAnotherUser {
             }
             this.skin = GetClassById(elements, "geometry")["character"].Value;
             this.iris = GetClassById(elements, "irises")["Irises"].Value;
-            this.morphs = new Dictionary<string, float>();
-            this.isMaleMorph = new Dictionary<string, bool>();
+            this.morphs = new List<MorphValue>();
             foreach (JSONNode entry in GetClassById(elements, "geometry")["morphs"].AsArray.Childs) {
-                this.morphs[entry["uid"].Value] = entry["value"].AsFloat;
-                this.isMaleMorph[entry["uid"].Value] = this.isMale;
+                this.morphs.Add(new MorphValue(entry["uid"].Value, entry["value"].AsFloat, this.isMale));
             }
             foreach (JSONNode entry in GetClassById(elements, "geometry")["morphsOtherGender"].AsArray.Childs) {
-                this.morphs[entry["uid"].Value] = entry["value"].AsFloat;
-                this.isMaleMorph[entry["uid"].Value] = !this.isMale;
+                this.morphs.Add(new MorphValue(entry["uid"].Value, entry["value"].AsFloat, !this.isMale));
             }
         }
 

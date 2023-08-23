@@ -10,12 +10,12 @@ namespace JustAnotherUser {
          **/
         public static List<DAZMorph> ScanBank(DAZCharacterSelector characterSelector, bool ignoreGender = false) {
             List<DAZMorph> r = new List<DAZMorph>();
-            if (characterSelector.gender.Equals(DAZCharacterSelector.Gender.Male) || ignoreGender) {
+            if (ignoreGender || characterSelector.gender.Equals(DAZCharacterSelector.Gender.Male)) {
                 r.AddRange(ScanBank(characterSelector.maleMorphBank1));
                 r.AddRange(ScanBank(characterSelector.maleMorphBank2));
                 r.AddRange(ScanBank(characterSelector.maleMorphBank3));
             }
-            if (characterSelector.gender.Equals(DAZCharacterSelector.Gender.Female) || ignoreGender) {
+            if (ignoreGender || characterSelector.gender.Equals(DAZCharacterSelector.Gender.Female)) {
                 r.AddRange(ScanBank(characterSelector.femaleMorphBank1));
                 r.AddRange(ScanBank(characterSelector.femaleMorphBank2));
                 r.AddRange(ScanBank(characterSelector.femaleMorphBank3));
@@ -23,7 +23,23 @@ namespace JustAnotherUser {
             return r;
         }
 
-        public static List<DAZMorph> ScanBank(DAZMorphBank bank) { // TODO only morph (not morph & pose)
+        public static bool? IsMorphAMaleMorph(DAZCharacterSelector characterSelector, DAZMorph morph) {
+            List<DAZMorph> maleMorphs = new List<DAZMorph>();
+            maleMorphs.AddRange(ScanBank(characterSelector.maleMorphBank1));
+            maleMorphs.AddRange(ScanBank(characterSelector.maleMorphBank2));
+            maleMorphs.AddRange(ScanBank(characterSelector.maleMorphBank3));
+            if (maleMorphs.Contains(morph)) return true;
+
+            List<DAZMorph> femaleMorphs = new List<DAZMorph>();
+            femaleMorphs.AddRange(ScanBank(characterSelector.femaleMorphBank1));
+            femaleMorphs.AddRange(ScanBank(characterSelector.femaleMorphBank2));
+            femaleMorphs.AddRange(ScanBank(characterSelector.femaleMorphBank3));
+            if (femaleMorphs.Contains(morph)) return false;
+
+            return null;
+        }
+
+        private static List<DAZMorph> ScanBank(DAZMorphBank bank) { // TODO only morph (not morph & pose)
             List<DAZMorph> r = new List<DAZMorph>();
             if (bank == null) return r;
 
@@ -35,8 +51,36 @@ namespace JustAnotherUser {
             return r;
         }
 
-        public static DAZMorph FindMorphByID(List<DAZMorph> morphs, string id) {
-            return morphs.FirstOrDefault(m => m.uid.Equals(id));
+        /**
+         * Gets a morph given an id or name
+         * @author https://github.com/mrmr32/PICOFacialTrackerVamLink
+         **/
+        public static DAZMorph FindMorphByID(GenerateDAZMorphsControlUI morphs, GenerateDAZMorphsControlUI otherGenderMorphs, string id, bool? onyCurrentGenderMorphs = null) {
+            List<GenerateDAZMorphsControlUI> UIs = new List<GenerateDAZMorphsControlUI> {};
+            if (onyCurrentGenderMorphs != false) UIs.Add(morphs); // if onlyCurrentGender, or both (null)
+            if (onyCurrentGenderMorphs != true && otherGenderMorphs != null) UIs.Add(otherGenderMorphs); // if onlyOtherGender, or both (null), and the other is specified
+
+            foreach (GenerateDAZMorphsControlUI control in UIs) {
+                try {
+                    return control.GetMorphByUid(id);
+                }
+                catch { }
+
+                try {
+                    return control.GetMorphByDisplayName(id);
+                }
+                catch { }
+            }
+            return null;
+        }
+        public static DAZMorph FindMorphByID(DAZCharacterSelector cs, string id, bool? onyCurrentGenderMorphs = null) {
+            return MorphHelper.FindMorphByID(cs.morphsControlUI, cs.morphsControlUIOtherGender, id, onyCurrentGenderMorphs);
+        }
+
+        public static DAZMorph FindMorphByIDGivenGender(DAZCharacterSelector cs, string id, bool isMaleMorph) {
+            bool isMale = cs.gender.Equals(DAZCharacterSelector.Gender.Male);
+            bool onyCurrentGenderMorphs = (isMale == isMaleMorph);
+            return MorphHelper.FindMorphByID(cs.morphsControlUI, cs.morphsControlUIOtherGender, id, onyCurrentGenderMorphs);
         }
         
         public static List<string> GetAllMorphNames(List<DAZMorph> morphs) {

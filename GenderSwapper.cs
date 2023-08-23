@@ -8,7 +8,7 @@ using MVR.FileManagementSecure; // WriteAllBytes
 using System.Text.RegularExpressions;
 
 namespace JustAnotherUser {
-    public class GenderSwapper : MVRScript, SkinToDefaultTextures {
+    public class GenderSwapper : MVRScript {
         private static readonly string VERSION = "0.4";
         private static readonly int UUID_LENGTH = 8;
 
@@ -22,24 +22,10 @@ namespace JustAnotherUser {
         private CUAManagerPath _path;
 
         private DAZCharacterSelector _dazCharacterSelector;
-        private JSONStorable _decalmakerStorable;
+        private string decalMakerId;
         private List<string> _decalmakerProgressStorables;
         
         private List<DAZMorph> _morphs;
-        private Dictionary<string, float> _defaultMorphs;
-
-        public List<DAZMorph> morphs {
-            get { return this._morphs; }
-            set {
-                this._morphs = value;
-                
-                var defaultMorphs = MorphHelper.GetDefaults(this._morphs);
-                this._defaultMorphs = new Dictionary<string, float>();
-                foreach (var e in defaultMorphs) {
-                    this._defaultMorphs[e.Key.uid] = e.Value;
-                }
-            }
-        }
 
         private PresetData _origin;
         private PresetData _destiny;
@@ -50,6 +36,16 @@ namespace JustAnotherUser {
         private bool _decalIsLoading = false;
 
         private string _baseName;
+
+        private JSONStorable decalmakerStorable {
+            get {
+                try {
+                    return containingAtom.GetStorableByID(decalMakerId);
+                } catch (Exception ex) {
+                    return null;
+                }
+            }
+        }
 
         public override void Init() {
             // plugin VaM GUI description
@@ -65,7 +61,6 @@ namespace JustAnotherUser {
                 return;
             }
             this._decalmakerProgressStorables = new List<string>();
-            this.morphs = MorphHelper.ScanBank(this._dazCharacterSelector, ignoreGender: true);
 
             this._origin = new PresetData();
             this._destiny = new PresetData();
@@ -96,19 +91,15 @@ namespace JustAnotherUser {
         }
 
         protected void Start() {
-            string decalMakerId = this.GetDecalMaker();
+            this.decalMakerId = this.GetDecalMaker();
             if (decalMakerId == null) {
                 SuperController.LogError("GenderSwapper needs DecalMaker in order to work. Please, first add DecalMaker.");
                 return;
             }
-            this._decalmakerStorable = containingAtom.GetStorableByID(decalMakerId);
 
             UVData.Load(this);
 
             StartCoroutine(LoadDataOnceAllFinishes());
-
-            // TODO temporal test
-            //this.getTextures(this._dazCharacterSelector.selectedCharacter.displayName);
         }
 
         private IEnumerator LoadDataOnceAllFinishes() {
@@ -130,15 +121,16 @@ namespace JustAnotherUser {
         public void SetProgress(float val) {
             if (!this._origin.isValid || !this._destiny.isValid) return; // we need both
             
-            Dictionary<string,float> result = LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), this._defaultMorphs, val);
+            List<MorphValue> result = LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), val);
             foreach (var entry in result) {
-                MorphHelper.SetMorphValue(MorphHelper.FindMorphByID(this.morphs, entry.Key), entry.Value);
+                MorphHelper.SetMorphValue(MorphHelper.FindMorphByIDGivenGender(this._dazCharacterSelector, entry.id, entry.isMaleMorph), entry.value);
             }
 
-            if (this._decalmakerStorable == null) return;
+            JSONStorable decalMakerStorable = this.decalmakerStorable;
+            if (decalMakerStorable == null) return;
             lock (this._decalIsLoadingSync) {
                 foreach (string storable in this._decalmakerProgressStorables) {
-                    this._decalmakerStorable.SetFloatParamValue(storable, 1.0f - val); // as we're assigning the source here, 0% progress is 100% source, and 100% progress 0% source
+                    decalMakerStorable.SetFloatParamValue(storable, 1.0f - val); // as we're assigning the source here, 0% progress is 100% source, and 100% progress 0% source
                 }
             }
         }
@@ -258,17 +250,26 @@ namespace JustAnotherUser {
 
         /**
          * From origin's morphs to target's. If no morph is present at its counterpart, then a value of 0 is assumed.
-         * TODO shouldn't we keep two different dictionaries for male-female morphs?
          **/
-        public static Dictionary<string, float> LeapMorphs(Dictionary<string, float> origin, Dictionary<string, float> target, Dictionary<string, float> defaults, float targetPercentage) {
-            Dictionary<string, float> r = new Dictionary<string, float>();
+        public static List<MorphValue> LeapMorphs(List<MorphValue> origin, List<MorphValue> target, float targetPercentage) {
+            List<MorphValue> r = new List<MorphValue>();
 
-            if (origin == null) origin = new Dictionary<string, float>();
-            if (target == null) target = new Dictionary<string, float>();
+            Dictionary<string, float> originHash = new Dictionary<string, float>(),
+                                    targetHash = new Dictionary<string, float>();
+            if (origin != null) {
+                foreach (var e in origin) originHash.Add(e.id + (e.isMaleMorph ? "m" : "f"), e.value);
+            }
+            if (target != null) {
+                foreach (var e in target) targetHash.Add(e.id + (e.isMaleMorph ? "m" : "f"), e.value);
+            }
             
-            foreach (string morph in origin.Keys.Union(target.Keys)) {
-                float from = (origin.ContainsKey(morph) ? origin[morph] : (/*defaults.ContainsKey(morph) ? defaults[morph] :*/ 0.0f)),
-                    to = (target.ContainsKey(morph) ? target[morph] : (/*defaults.ContainsKey(morph) ? defaults[morph] :*/ 0.0f));
+            foreach (string morphAndGender in originHash.Keys.Union(targetHash.Keys)) {
+                // the last character of `morphAndGender` is the gender
+                string morph = morphAndGender.Remove(morphAndGender.Length - 1);
+                bool isMaleMorph = morphAndGender.EndsWith("m");
+
+                float from = (originHash.ContainsKey(morphAndGender) ? originHash[morphAndGender] : 0.0f),
+                    to = (targetHash.ContainsKey(morphAndGender) ? targetHash[morphAndGender] : 0.0f);
 
                 // 1 to 0 at 0% is 1, at 50% 0.5, at 100% 0
                 // 0 to 1 at 0% is 0, at 50% 0.5, at 100% 1
@@ -276,7 +277,7 @@ namespace JustAnotherUser {
                 float diff = to - from;
                 float current = from + diff*targetPercentage;
 
-                r[morph] = current;
+                r.Add(new MorphValue(morph, current, isMaleMorph));
             }
 
             return r;
@@ -284,7 +285,6 @@ namespace JustAnotherUser {
 
         public void SetCharacterJSON(JSONClass geometry) {
             this._dazCharacterSelector.RestoreFromJSON(geometry);
-            this.morphs = MorphHelper.ScanBank(this._dazCharacterSelector, ignoreGender: true);
         }
 
         private void LoadData(bool retryIfFail = false) {
@@ -292,9 +292,7 @@ namespace JustAnotherUser {
                 // load destiny data (eyes, sex...)
                 bool useOtherSexMorphs = (this._origin.isValid && this._destiny.isValid) && (this._origin.isMale != this._destiny.isMale);
 
-                JSONClass geometry = this._dazCharacterSelector.GetJSON();
-                this._destiny.LoadGeometryToAtom(geometry, useOtherSexMorphs);
-                this.SetCharacterJSON(geometry);
+                this._destiny.LoadGeometryToAtom(this._dazCharacterSelector, useOtherSexMorphs);
 
                 // morphs will be set later, on `SetProgress`
                 
@@ -305,8 +303,6 @@ namespace JustAnotherUser {
                     this._destiny.LoadTexturesToAtom(textures);
                     t.RestoreFromJSON(textures);
                 }
-
-                if (this._decalmakerStorable != null) this._decalmakerStorable.CallAction("Reset To Original Textures");
             }
             
             this.LoadUIData();
@@ -324,39 +320,21 @@ namespace JustAnotherUser {
         private void LoadMorphs(float progress) {
             if (!this._origin.isValid || !this._destiny.isValid) return; // we need both
             
-            Dictionary<string,float> result = LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), this._defaultMorphs, progress);
-            JSONClass geometry = this._dazCharacterSelector.GetJSON();
-            JSONArray morphsJSON = new JSONArray();
-            JSONArray morphsOnOtherGenderJSON = new JSONArray();
+            List<MorphValue> result = LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), progress);
 
-            Dictionary<string, bool> morphIDToIsMorphYourGender = new Dictionary<string, bool>();
-            morphIDToIsMorphYourGender["MVR_G2Female"] = this._destiny.isMale; // MVR_G2Female is a male morph
-            foreach (var e in this._origin.isMaleMorph) morphIDToIsMorphYourGender[e.Key] = (e.Value == this._destiny.isMale);
-            foreach (var e in this._destiny.isMaleMorph) morphIDToIsMorphYourGender[e.Key] = (e.Value == this._destiny.isMale);
-            
+            this._dazCharacterSelector.morphsControlMaleUI.ZeroAll();
+            this._dazCharacterSelector.morphsControlFemaleUI.ZeroAll();
+
+            bool areMorphsOnOtherGender = false;
+            bool isMale = this._dazCharacterSelector.gender.Equals(DAZCharacterSelector.Gender.Male);
             foreach (var entry in result) {
-                JSONClass entryJSON = new JSONClass();
-
-                entryJSON["uid"] = entry.Key;
-                entryJSON["name"] = MorphHelper.GetMorphName(entry.Key);
-                entryJSON["value"].AsFloat = entry.Value;
-                
-                if (!morphIDToIsMorphYourGender.ContainsKey(entry.Key)) SuperController.LogError("Morph " + entry.Key + " not found in male's batch nor female's");
-                JSONArray target = (morphIDToIsMorphYourGender[entry.Key] ? morphsJSON : morphsOnOtherGenderJSON);
-                target.Add(entryJSON);
+                MorphHelper.SetMorphValue(MorphHelper.FindMorphByIDGivenGender(this._dazCharacterSelector, entry.id, entry.isMaleMorph), entry.value);
+                if (entry.isMaleMorph != isMale) areMorphsOnOtherGender = true;
             }
-            geometry["morphs"] = morphsJSON;
-            geometry["morphsOtherGender"] = morphsOnOtherGenderJSON;
-            
-            geometry["useFemaleMorphsOnMale"].AsBool = false;
-            geometry["useMaleMorphsOnFemale"].AsBool = false;
-            if (morphsOnOtherGenderJSON.Count > 0) geometry[this._destiny.isMale ? "useFemaleMorphsOnMale" : "useMaleMorphsOnFemale"].AsBool = true;
-            this.SetCharacterJSON(geometry);
 
-            // sometimes (besides explicitally telling the morphs in the JSON) some extra morphs are added; remove those
-            foreach (DAZMorph morph in this.morphs) {
-                if (MorphHelper.GetMorphValue(morph) != 0 && !result.ContainsKey(morph.uid)) MorphHelper.SetMorphValue(morph, 0);
-            }
+            this._dazCharacterSelector.SetBoolParamValue("useFemaleMorphsOnMale", false);
+            this._dazCharacterSelector.SetBoolParamValue("useMaleMorphsOnFemale", false);
+            if (areMorphsOnOtherGender) this._dazCharacterSelector.SetBoolParamValue(this._destiny.isMale ? "useFemaleMorphsOnMale" : "useMaleMorphsOnFemale", true);
         }
         
         private IEnumerator LoadDecalMaker(float progress = 0f, bool retryIfFail = false) {
@@ -368,10 +346,11 @@ namespace JustAnotherUser {
             if (!isYours) yield break; // already loading
 
             Exception exception = null; // TODO try/catch, saving the exception (if any) here
-            if (this._origin.isValid && this._destiny.isValid && this._decalmakerStorable != null) { // we need destiny data to create the origin decal
+            if (this.decalmakerStorable == null) exception = new Exception("DecalMaker not loaded.");
+            else if (this._origin.isValid && this._destiny.isValid) { // we need destiny data to create the origin decal
                 JSONClass cls = new JSONClass();
                 try {
-                    cls = this._decalmakerStorable.GetJSON();
+                    cls = this.decalmakerStorable.GetJSON();
                 } catch (Exception ex) {
                     exception = ex;
                 }
@@ -398,9 +377,9 @@ namespace JustAnotherUser {
                         // @pre the texture must be the same sex as the atom
                         LoadOriginTexturesIntoDecalMaker(cls, texture, progress);
 
-                        this._decalmakerStorable.CallAction("ClearAll"); //removes any existing loaded decals
-                        this._decalmakerStorable.RestoreFromJSON(cls);
-                        this._decalmakerStorable.CallAction("PerformLoad"); //load the data from the _savedData variable
+                        this.decalmakerStorable.CallAction("ClearAll"); //removes any existing loaded decals
+                        this.decalmakerStorable.RestoreFromJSON(cls);
+                        this.decalmakerStorable.CallAction("PerformLoad"); //load the data from the _savedData variable
 
                         GetDecalMakerStorablesIds(cls);
                     } catch (Exception ex) {
@@ -444,16 +423,16 @@ namespace JustAnotherUser {
         }
 
         private string MorphListToString(bool target) {
-            Dictionary<string, float> list = this.GetMorphs(target);
+            List<MorphValue> list = this.GetMorphs(target);
 
             string r = "";
             float? femaleConversionValue = null;
             foreach (var e in list) {
-                if (e.Key.Equals("MVR_G2Female")) femaleConversionValue = e.Value; // we'll place it at the bottom
+                if (e.id.Equals("MVR_G2Female")) femaleConversionValue = e.value; // we'll place it at the bottom
                 else {
-                    string name = MorphHelper.FindMorphByID(this.morphs, e.Key)?.resolvedDisplayName;
-                    if (name == null) name = e.Key;
-                    r += name + ": " + e.Value.ToString("0.00") + "\n";
+                    string name = MorphHelper.FindMorphByIDGivenGender(this._dazCharacterSelector, e.id, e.isMaleMorph)?.resolvedDisplayName;
+                    if (name == null) name = e.id;
+                    r += name + ": " + e.value.ToString("0.00") + "\n";
                 }
             }
 
@@ -465,15 +444,15 @@ namespace JustAnotherUser {
             return r;
         }
 
-        private Dictionary<string, float> GetMorphs(bool target) {
+        private List<MorphValue> GetMorphs(bool target) {
             if (target) return this._destiny?.morphs;
 
             // the source may need to add the `MVR_G2Female` morph
             if (this._origin == null) return null;
             if (this._destiny.isMale == this._origin.isMale) return this._origin.morphs; // same sex; we don't need to convert anything
 
-            Dictionary<string, float> r = new Dictionary<string, float>(this._origin.morphs);
-            r["MVR_G2Female"] = (this._destiny.isMale ? 1f : -1f); // if it's a female converting into a male we need to set it on 1, if it's a male into a female set it to -1
+            List<MorphValue> r = new List<MorphValue>(this._origin.morphs);
+            r.Add(new MorphValue("MVR_G2Female", (this._destiny.isMale ? 1f : -1f), true)); // if it's a female converting into a male we need to set it on 1, if it's a male into a female set it to -1
             return r;
         }
 
@@ -599,10 +578,6 @@ namespace JustAnotherUser {
                 if (intoMale) textures.maleTexture = transformedTexture;
                 else textures.femaleTexture = transformedTexture;
             }
-        }
-
-        public AtomTexture getTextures(string skinName) {
-            return SkinToDefaultTexturesBase.getTextures(this._dazCharacterSelector.characters, skinName);
         }
     }
 }
