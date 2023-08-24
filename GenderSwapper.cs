@@ -6,6 +6,7 @@ using UnityEngine;
 using SimpleJSON; // JSONNode
 using MVR.FileManagementSecure; // WriteAllBytes
 using System.Text.RegularExpressions;
+using static UnityEngine.UI.Image;
 
 namespace JustAnotherUser {
     public class GenderSwapper : MVRScript {
@@ -41,6 +42,16 @@ namespace JustAnotherUser {
             get {
                 try {
                     return containingAtom.GetStorableByID(decalMakerId);
+                } catch (Exception ex) {
+                    return null;
+                }
+            }
+        }
+
+        private JSONStorable alternativeFutaStorable {
+            get {
+                try {
+                    return containingAtom.GetStorableByID(GetAlternativeFuta());
                 } catch (Exception ex) {
                     return null;
                 }
@@ -84,6 +95,7 @@ namespace JustAnotherUser {
                     SuperController.LogError(ex.ToString());
                 }
             }, true);
+            this._ui.SetOnButtonClick(SpawnPenis);
 
             // TODO add scene name instead of random
             Regex rgx = new Regex("[^a-zA-Z0-9]");
@@ -93,11 +105,21 @@ namespace JustAnotherUser {
         protected void Start() {
             this.decalMakerId = this.GetDecalMaker();
             if (decalMakerId == null) {
-                SuperController.LogError("GenderSwapper needs DecalMaker in order to work. Please, first add DecalMaker.");
-                return;
+                SuperController.LogMessage("DecalMaker not found, adding it to the atom...");
+                AddPlugin("Chokaphi.DecalMaker.33:/Custom/Scripts/Chokaphi/VAM_Decal_Maker/VAM_Decal_Maker.cs");
+                decalMakerId = this.GetDecalMaker();
+                // TODO the label is removed; fix it
             }
 
             UVData.Load(this);
+
+            // disable `Hide Female Gens`
+            JSONStorable af = this.alternativeFutaStorable;
+            if (af != null) {
+                JSONClass afJson = af.GetJSON();
+                afJson["Hide Female Gens"].AsBool = false;
+                af.RestoreFromJSON(afJson);
+            }
 
             StartCoroutine(LoadDataOnceAllFinishes());
         }
@@ -109,6 +131,28 @@ namespace JustAnotherUser {
             this.LoadData(retryIfFail: true); // DecalMaker may fail at the beginning
         }
 
+        private void AddPlugin(string id) {
+            MVRPluginManager pluginManager = (containingAtom.GetStorableByID("PluginManager") as MVRPluginManager);
+            JSONClass json = pluginManager.GetJSON();
+
+            JSONClass plugins = json["plugins"].AsObject;
+            int maxPluginID = 0;
+            Regex pluginId = new Regex(@"plugin#(\d+)");
+            foreach (KeyValuePair<string, JSONNode> plugin in plugins) {
+                var match = pluginId.Match(plugin.Key);
+
+                if (match.Success) {
+                    int matchedValue = Int32.Parse(match.Groups[1].Value);
+                    if (matchedValue > maxPluginID) maxPluginID = matchedValue;
+                }
+            }
+
+            plugins.Add("plugin#" + (maxPluginID+1).ToString(), id);
+
+            json["plugins"] = plugins;
+            pluginManager.LateRestoreFromJSON(json);
+        }
+
         private string GetDecalMaker() {
             Regex decalName = new Regex(@"plugin#\d+_VAM_Decal_Maker.Decal_Maker");
             foreach (string id in containingAtom.GetStorableIDs()) {
@@ -118,12 +162,26 @@ namespace JustAnotherUser {
             return null; // none
         }
 
+        private string GetAlternativeFuta() {
+            Regex afName = new Regex(@"plugin#\d+_Stopper.AlternativeFuta");
+            foreach (string id in containingAtom.GetStorableIDs()) {
+                if (afName.Match(id).Success) return id;
+            }
+
+            return null; // none
+        }
+
         public void SetProgress(float val) {
             if (!this._origin.isValid || !this._destiny.isValid) return; // we need both
             
-            List<MorphValue> result = LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), val);
+            List<MorphValue> result = MorphHelper.LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), val);
             foreach (var entry in result) {
                 MorphHelper.SetMorphValue(MorphHelper.FindMorphByIDGivenGender(this._dazCharacterSelector, entry.id, entry.isMaleMorph), entry.value);
+            }
+
+            if (IsFemaleWithPenis()) {
+                if (val >= 0.99f) this.alternativeFutaStorable.enabled = false;
+                else this.alternativeFutaStorable.enabled = true;
             }
 
             JSONStorable decalMakerStorable = this.decalmakerStorable;
@@ -133,6 +191,28 @@ namespace JustAnotherUser {
                     decalMakerStorable.SetFloatParamValue(storable, 1.0f - val); // as we're assigning the source here, 0% progress is 100% source, and 100% progress 0% source
                 }
             }
+        }
+
+        public void SpawnPenis() {
+            if (GetAlternativeFuta() != null) return; // already added
+            AddPlugin("Stopper.AlternativeFuta.21:/Custom/Scripts/Stopper/AlternativeFuta/AlternativeFuta.cs");
+
+            // TODO it seems like `AddPlugin` blocks the program, so we'll add it on the `Start`
+            JSONStorable af = this.alternativeFutaStorable;
+            JSONClass afJson = af.GetJSON();
+            afJson["Hide Female Gens"].AsBool = false;
+            af.RestoreFromJSON(afJson);
+        }
+
+        public bool IsFemaleWithoutPenis() {
+            if (this._origin == null || this._destiny == null) return false; // we need both
+            if (!this._origin.isMale || this._destiny.isMale) return false; // it needs to be male to female
+            return (GetAlternativeFuta() == null); // if no `AlternativeFuta`, then is a female without penis
+        }
+
+        public bool IsFemaleWithPenis() {
+            if (this._destiny == null || this._destiny.isMale) return false;
+            return (GetAlternativeFuta() != null);
         }
 
         /**
@@ -248,41 +328,6 @@ namespace JustAnotherUser {
             }
         }
 
-        /**
-         * From origin's morphs to target's. If no morph is present at its counterpart, then a value of 0 is assumed.
-         **/
-        public static List<MorphValue> LeapMorphs(List<MorphValue> origin, List<MorphValue> target, float targetPercentage) {
-            List<MorphValue> r = new List<MorphValue>();
-
-            Dictionary<string, float> originHash = new Dictionary<string, float>(),
-                                    targetHash = new Dictionary<string, float>();
-            if (origin != null) {
-                foreach (var e in origin) originHash.Add(e.id + (e.isMaleMorph ? "m" : "f"), e.value);
-            }
-            if (target != null) {
-                foreach (var e in target) targetHash.Add(e.id + (e.isMaleMorph ? "m" : "f"), e.value);
-            }
-            
-            foreach (string morphAndGender in originHash.Keys.Union(targetHash.Keys)) {
-                // the last character of `morphAndGender` is the gender
-                string morph = morphAndGender.Remove(morphAndGender.Length - 1);
-                bool isMaleMorph = morphAndGender.EndsWith("m");
-
-                float from = (originHash.ContainsKey(morphAndGender) ? originHash[morphAndGender] : 0.0f),
-                    to = (targetHash.ContainsKey(morphAndGender) ? targetHash[morphAndGender] : 0.0f);
-
-                // 1 to 0 at 0% is 1, at 50% 0.5, at 100% 0
-                // 0 to 1 at 0% is 0, at 50% 0.5, at 100% 1
-                // 1 to 1 is always 1
-                float diff = to - from;
-                float current = from + diff*targetPercentage;
-
-                r.Add(new MorphValue(morph, current, isMaleMorph));
-            }
-
-            return r;
-        }
-
         public void SetCharacterJSON(JSONClass geometry) {
             this._dazCharacterSelector.RestoreFromJSON(geometry);
         }
@@ -303,6 +348,12 @@ namespace JustAnotherUser {
                     this._destiny.LoadTexturesToAtom(textures);
                     t.RestoreFromJSON(textures);
                 }
+
+                if (GetAlternativeFuta() != null) {
+                    // as we may have reloaded the skin, reload the penis
+                    this.alternativeFutaStorable.enabled = false;
+                    if (this._ui.GetSliderProgress() < 0.99f) this.alternativeFutaStorable.enabled = true;
+                }
             }
             
             this.LoadUIData();
@@ -315,12 +366,12 @@ namespace JustAnotherUser {
         }
 
         /**
-         * Loads the morphs into the JSON because for some reason `morphs` don't contains all of them
+         * Loads the morphs into the character
          */
         private void LoadMorphs(float progress) {
             if (!this._origin.isValid || !this._destiny.isValid) return; // we need both
             
-            List<MorphValue> result = LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), progress);
+            List<MorphValue> result = MorphHelper.LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), progress);
 
             this._dazCharacterSelector.morphsControlMaleUI.ZeroAll();
             this._dazCharacterSelector.morphsControlFemaleUI.ZeroAll();
@@ -427,8 +478,13 @@ namespace JustAnotherUser {
 
             string r = "";
             float? femaleConversionValue = null;
+            bool shrinkPenisMorphsPresent = false;
             foreach (var e in list) {
                 if (e.id.Equals("MVR_G2Female")) femaleConversionValue = e.value; // we'll place it at the bottom
+                else if ((e.id.Equals("Penis Length") && e.value < -1f) ||
+                    (e.id.Equals("Sh_Girth_XL") && e.value < -1f) ||
+                    (e.id.Equals("Sh_Height") && e.value < -1f) ||
+                    (e.id.Equals("WeebU.My_morphs.3:/Custom/Atom/Person/Morphs/male_genitalia/extra/bigballs.vmi") && e.value < -1f)) shrinkPenisMorphsPresent = true; // we'll place it at the bottom
                 else {
                     string name = MorphHelper.FindMorphByIDGivenGender(this._dazCharacterSelector, e.id, e.isMaleMorph)?.resolvedDisplayName;
                     if (name == null) name = e.id;
@@ -440,20 +496,39 @@ namespace JustAnotherUser {
                 r += "MVR_G2Female: " + femaleConversionValue.Value.ToString("0.00") + "*\n\n"
                     + "*As you’re changing from " + (this._origin.isMale ? "male" : "female") + " to " + (this._destiny.isMale ? "male" : "female") + " this morph needs to be added";
             }
+            if (shrinkPenisMorphsPresent) {
+                r += "Penis Length: -1.40**\n"
+                    + "Sh_Girth_XL: -2.00**\n"
+                    + "Sh_Height: -2.00**\n"
+                    + "Big balls: -2.00**\n\n"
+                    + "**As you’re changing from " + (this._origin.isMale ? "male" : "female") + " to " + (this._destiny.isMale ? "male" : "female") + " this morph needs to be added";
+            }
 
             return r;
         }
 
         private List<MorphValue> GetMorphs(bool target) {
-            if (target) return this._destiny?.morphs;
+            if (target) {
+                if (this._destiny == null) return null;
+                List<MorphValue> r = new List<MorphValue>(this._destiny.morphs);
+                if (!this._destiny.isMale && this._origin.isMale) {
+                    // male to female; shrink penis
+                    r.Add(new MorphValue("Penis Length", -1.4f, true));
+                    r.Add(new MorphValue("Sh_Girth_XL", -2f, true));
+                    r.Add(new MorphValue("Sh_Height", -2f, true));
+                    r.Add(new MorphValue("WeebU.My_morphs.3:/Custom/Atom/Person/Morphs/male_genitalia/extra/bigballs.vmi", -2f, true));
+                }
+                return r;
+            }
+            else {
+                // the source may need to add the `MVR_G2Female` morph
+                if (this._origin == null) return null;
+                if (this._destiny.isMale == this._origin.isMale) return this._origin.morphs; // same sex; we don't need to convert anything
 
-            // the source may need to add the `MVR_G2Female` morph
-            if (this._origin == null) return null;
-            if (this._destiny.isMale == this._origin.isMale) return this._origin.morphs; // same sex; we don't need to convert anything
-
-            List<MorphValue> r = new List<MorphValue>(this._origin.morphs);
-            r.Add(new MorphValue("MVR_G2Female", (this._destiny.isMale ? 1f : -1f), true)); // if it's a female converting into a male we need to set it on 1, if it's a male into a female set it to -1
-            return r;
+                List<MorphValue> r = new List<MorphValue>(this._origin.morphs);
+                r.Add(new MorphValue("MVR_G2Female", (this._destiny.isMale ? 1f : -1f), true)); // if it's a female converting into a male we need to set it on 1, if it's a male into a female set it to -1
+                return r;
+            }
         }
 
         public static string GetRandomName(int lenght) {

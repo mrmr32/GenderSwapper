@@ -114,5 +114,48 @@ namespace JustAnotherUser {
         public static float GetMorphValue(DAZMorph morph) {
             return morph.appliedValue;
         }
+
+        private static Dictionary<string, float> GetMorphsHash(List<MorphValue> morphs) {
+            Dictionary<string, float> r = new Dictionary<string, float>();
+            if (morphs == null) return r;
+
+            foreach (var e in morphs) r.Add(e.id + (e.isMaleMorph ? "m" : "f"), e.value);
+            return r;
+        }
+
+        /**
+         * From origin's morphs to target's. If no morph is present at its counterpart, then a value of 0 is assumed.
+         **/
+        public static List<MorphValue> LeapMorphs(List<MorphValue> origin, List<MorphValue> target, float targetPercentage, List<MorphValue> overrideMorphs = null) {
+            List<MorphValue> r = new List<MorphValue>();
+
+            Dictionary<string, float> originHash = GetMorphsHash(origin),
+                                    targetHash = GetMorphsHash(target),
+                                    overrideMorphsHash = GetMorphsHash(overrideMorphs);
+            
+            foreach (string morphAndGender in originHash.Keys.Union(targetHash.Keys)) {
+                // the last character of `morphAndGender` is the gender
+                string morph = morphAndGender.Remove(morphAndGender.Length - 1);
+                bool isMaleMorph = morphAndGender.EndsWith("m");
+
+                float current;
+                if (overrideMorphsHash.ContainsKey(morphAndGender)) current = overrideMorphsHash[morphAndGender]; // override
+                else {
+                    // leap
+                    float from = (originHash.ContainsKey(morphAndGender) ? originHash[morphAndGender] : 0.0f),
+                        to = (targetHash.ContainsKey(morphAndGender) ? targetHash[morphAndGender] : 0.0f);
+
+                    // 1 to 0 at 0% is 1, at 50% 0.5, at 100% 0
+                    // 0 to 1 at 0% is 0, at 50% 0.5, at 100% 1
+                    // 1 to 1 is always 1
+                    float diff = to - from;
+                    current = from + diff*targetPercentage;
+                }
+
+                r.Add(new MorphValue(morph, current, isMaleMorph));
+            }
+
+            return r;
+        }
     }
 }
