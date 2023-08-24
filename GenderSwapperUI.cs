@@ -66,6 +66,7 @@ namespace JustAnotherUser {
 
         private JSONStorableFloat _transformationProgress;
         private UIDynamicSlider _slider;
+        private UIDynamicButton _btn;
 
         public GenderSwapperUI(GenderSwapper script) {
             this._script = script;
@@ -112,6 +113,10 @@ namespace JustAnotherUser {
             this._slider.slider.onValueChanged.AddListener(e);
         }
 
+        public void SetOnButtonClick(UnityAction e) {
+            this._btn.button.onClick.AddListener(e);
+        }
+
         public float GetSliderProgress() {
             return this._slider.slider.value;
         }
@@ -121,8 +126,8 @@ namespace JustAnotherUser {
             this._script.RegisterFloat(this._transformationProgress);
             this._slider = this._script.CreateSlider(this._transformationProgress);
 
-            UIDynamic spacer = this._script.CreateSpacer(true);
-            spacer.height = this._slider.height;
+            this._btn = this._script.CreateButton("Spawn penis (only for female destiny)", true);
+            this._btn.height = this._slider.height;
 
             this._soruce.CreateUI(false);
             this._destiny.CreateUI(true);
