@@ -3,5 +3,6 @@ src\GenderSwapperUI.cs
 src\PresetData.cs
 src\CUAManagerPath.cs
 src\MorphHelper.cs
+src\AdjustableElement.cs
 mrmr32.UVSwapper.4:/Custom/Scripts/mrmr32/UVSwapper/src/UVData.cs
 mrmr32.UVSwapper.4:/Custom/Scripts/mrmr32/UVSwapper/src/GenitalsHelper.cs

@@ -115,7 +115,7 @@ namespace JustAnotherUser {
             return morph.appliedValue;
         }
 
-        private static Dictionary<string, float> GetMorphsHash(List<MorphValue> morphs) {
+        public static Dictionary<string, float> GetMorphsHash(List<MorphValue> morphs) {
             Dictionary<string, float> r = new Dictionary<string, float>();
             if (morphs == null) return r;
 

@@ -296,11 +296,11 @@ namespace JustAnotherUser {
             }*/
         }
             
-        public void LoadTexturesToAtom(JSONClass textures) {
+        public JSONClass LoadTexturesToAtom(JSONClass textures) {
             List<string> appliedTextures = textures.Keys.Where(k => !k.Equals("id")).ToList();
             foreach (string at in appliedTextures) textures.Remove(at); // clear the previous textures
 
-            if (!this.isValid) return;
+            if (!this.isValid) return textures;
 
             if (this.texture.head.diffuse.Length > 0) textures["faceDiffuseUrl"] = this.texture.head.diffuse;
             if (this.texture.head.specular.Length > 0) textures["faceSpecularUrl"] = this.texture.head.specular;
@@ -322,6 +322,7 @@ namespace JustAnotherUser {
             if (this.texture.genitals.gloss.Length > 0) textures["genitalsGlossUrl"] = this.texture.genitals.gloss;
             if (this.texture.genitals.normal.Length > 0) textures["genitalsNormalUrl"] = this.texture.genitals.normal;
             if (this.texture.genitals.decal.Length > 0) textures["genitalsDecalUrl"] = this.texture.genitals.decal;
+            return textures;
         }
 
         public void RestoreFromAppearancePreset(string name, JSONClass jc) {

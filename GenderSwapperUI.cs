@@ -1,8 +1,10 @@
-﻿using System;
+﻿using SimpleJSON;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
+using static JSONStorableBool;
 
 namespace JustAnotherUser {
     class GenderSwapperUIColumn {
@@ -64,12 +66,15 @@ namespace JustAnotherUser {
         private GenderSwapperUIColumn _soruce,
                                       _destiny;
 
+        private AdjustableElementsGenderSwapperUI _adjustableElements;
+
         private JSONStorableFloat _transformationProgress;
         private UIDynamicSlider _slider;
         private UIDynamicButton _btn;
 
         public GenderSwapperUI(GenderSwapper script) {
             this._script = script;
+            this._adjustableElements = new AdjustableElementsGenderSwapperUI(script);
 
             this._soruce = new GenderSwapperUIColumn(script, "source_");
             this._destiny = new GenderSwapperUIColumn(script, "destiny_");
@@ -109,16 +114,16 @@ namespace JustAnotherUser {
             else this._soruce.textureList.val = list;
         }
 
-        public void SetOnSliderChange(UnityAction<float> e) {
-            this._slider.slider.onValueChanged.AddListener(e);
-        }
-
         public void SetOnButtonClick(UnityAction e) {
             this._btn.button.onClick.AddListener(e);
         }
 
         public float GetSliderProgress() {
             return this._slider.slider.value;
+        }
+
+        public AdjustableElementsGenderSwapperUI GetSubUI() {
+            return this._adjustableElements;
         }
 
         public void SetupUI() {
@@ -131,6 +136,160 @@ namespace JustAnotherUser {
 
             this._soruce.CreateUI(false);
             this._destiny.CreateUI(true);
+
+            // TODO move this to a different view
+            this._adjustableElements.SetupUI();
+        }
+
+        public void UpdateSliders(AdjustableElement globalSlider) {
+            this._transformationProgress.val = globalSlider.GetValue();
+            this._slider.slider.onValueChanged.RemoveAllListeners();
+            this._slider.slider.onValueChanged.AddListener((e) => {
+                globalSlider.SetValue(e);
+            });
+
+            this._adjustableElements.UpdateSliders(globalSlider);
+            globalSlider.SetValue(this.GetSliderProgress()); // update adjustable values
+        }
+    }
+
+    class AdjustableElementsGenderSwapperUI {
+        private GenderSwapper _script;
+
+        private List<UIDynamic> _uiElements;
+        private IDictionary<string,JSONStorableParam> _params, _defaultParams;
+
+        public AdjustableElementsGenderSwapperUI(GenderSwapper script) {
+            this._script = script;
+            this._uiElements = new List<UIDynamic>();
+            this._params = new Dictionary<string, JSONStorableParam>();
+            this._defaultParams = new Dictionary<string, JSONStorableParam>();
+        }
+
+        public void SetupUI() {
+            JSONStorableString msg = new JSONStorableString("overrideProgressMsg", "-- Override progress --");
+            UIDynamicTextField bodyLabelObject = this._script.CreateTextField(msg);
+            bodyLabelObject.height = 80f;
+
+            UIDynamic spacer = this._script.CreateSpacer(true);
+            spacer.height = bodyLabelObject.height;
+        }
+
+        public void Clear(ICollection<string> keepStorables = null) {
+            foreach (UIDynamic uiEelement in this._uiElements) {
+                if (uiEelement.GetType() == typeof(UIDynamicSlider)) this._script.RemoveSlider((UIDynamicSlider)uiEelement);
+                else if (uiEelement.GetType() == typeof(UIDynamicToggle)) this._script.RemoveToggle((UIDynamicToggle)uiEelement);
+            }
+            this._uiElements.Clear();
+
+            if (keepStorables == null) keepStorables = new List<string>();
+            foreach (JSONStorableParam param in new List<JSONStorableParam>(this._params.Values)) {
+                if (keepStorables.Contains(param.name)) continue;
+
+                if (param.GetType() == typeof(JSONStorableBool)) this._script.DeregisterBool((JSONStorableBool)param);
+                else if (param.GetType() == typeof(JSONStorableFloat)) this._script.DeregisterFloat((JSONStorableFloat)param);
+                this._params.Remove(param.name);
+            }
+        }
+
+        
+        public JSONClass GetJSON() {
+            JSONClass r = new JSONClass();
+            JSONClass bools = new JSONClass(),
+                    floats = new JSONClass();
+
+            foreach (JSONStorableParam param in this._params.Values) {
+                if (param.GetType() == typeof(JSONStorableBool) && ((JSONStorableBool)param).val) bools[param.name].AsBool = true;
+                else if (param.GetType() == typeof(JSONStorableFloat)) {
+                    JSONStorableFloat p = (JSONStorableFloat)param;
+                    if (p.defaultVal != p.val) floats[param.name].AsFloat = p.val;
+                }
+            }
+
+            r["bools"] = bools;
+            r["floats"] = floats;
+
+            return r;
+        }
+        
+        public void RestoreFromJSON(JSONClass jc, string subScenePrefix = "", bool isMerge = true, bool setMissingToDefault = true) {
+            if (jc == null) return;
+
+            this._defaultParams = new Dictionary<string, JSONStorableParam>();
+            foreach (KeyValuePair<string,JSONNode> e in jc["bools"].AsObject) {
+                JSONStorableBool overrideProgress = new JSONStorableBool(e.Key, false);
+                overrideProgress.val = e.Value.AsBool;
+                this._script.RegisterBool(overrideProgress);
+                this._params.Add(overrideProgress.name, overrideProgress);
+                this._defaultParams.Add(overrideProgress.name, overrideProgress);
+            }
+            foreach (KeyValuePair<string,JSONNode> e in jc["floats"].AsObject) {
+                JSONStorableFloat progress = new JSONStorableFloat(e.Key, 0f, 0f, 1f);
+                progress.val = e.Value.AsFloat;
+                this._script.RegisterFloat(progress);
+                this._params.Add(progress.name, progress);
+                this._defaultParams.Add(progress.name, progress);
+            }
+        }
+
+        public void UpdateSliders(AdjustableElement globalSlider) {
+            var keepStorables = new HashSet<string>(this._defaultParams.Keys);
+            foreach (AdjustableElement e in globalSlider.GetAll()) {
+                keepStorables.Add(GetOverrideStorableId(e));
+                keepStorables.Add(GetProgressStorableId(e));
+            }
+
+            this.Clear(keepStorables);
+
+            foreach (var subslider in globalSlider.GetSubelements()) {
+                this._UpdateSliders(subslider);
+            }
+        }
+
+        private static string GetProgressStorableId(AdjustableElement slider) {
+            return slider.name + "_progress";
+        }
+
+        private static string GetOverrideStorableId(AdjustableElement slider) {
+            return new String('>', slider.depth == 0 ? 0 : (slider.depth - 1)) + slider.name + "_activated";
+        }
+
+        private void _UpdateSliders(AdjustableElement slider) {
+            bool progressFound = this._params.ContainsKey(GetProgressStorableId(slider));
+            JSONStorableFloat progress = (progressFound ? this._params[GetProgressStorableId(slider)] as JSONStorableFloat : new JSONStorableFloat(GetProgressStorableId(slider), 0f, 0f, 1f));
+            JSONStorableBool overrideProgress;
+
+            if (this._params.ContainsKey(GetOverrideStorableId(slider))) overrideProgress = this._params[GetOverrideStorableId(slider)] as JSONStorableBool;
+            else {
+                overrideProgress = new JSONStorableBool(GetOverrideStorableId(slider), false);
+                this._script.RegisterBool(overrideProgress);
+                this._params.Add(overrideProgress.name, overrideProgress);
+            }
+            overrideProgress.setCallbackFunction = (SetBoolCallback)((e) => {
+                if (e) slider.SetValue(progress.val); // override (set something different than null)
+                else slider.SetValue(null); // back to slave
+            });
+            UIDynamicToggle toggle = this._script.CreateToggle(overrideProgress);
+            this._uiElements.Add(toggle);
+
+            if (!progressFound) {
+                this._script.RegisterFloat(progress);
+                this._params.Add(progress.name, progress);
+            }
+            UIDynamicSlider progressSlider = this._script.CreateSlider(progress, true);
+            this._uiElements.Add(progressSlider);
+            progressSlider.slider.onValueChanged.AddListener((e) => {
+                if (!overrideProgress.val) return; // the override must be enabled
+                slider.SetValue(e);
+            });
+            toggle.height = progressSlider.height;
+
+
+            foreach (var subslider in slider.GetSubelements()) {
+                this._UpdateSliders(subslider);
+            }
+
+            if (overrideProgress.val) slider.SetValue(progress.val); // update adjustable values
         }
     }
 }

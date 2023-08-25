@@ -10,7 +10,7 @@ using static UnityEngine.UI.Image;
 
 namespace JustAnotherUser {
     public class GenderSwapper : MVRScript {
-        private static readonly string VERSION = "0.4";
+        private static readonly string VERSION = "0.5";
         private static readonly int UUID_LENGTH = 8;
 
         public static readonly int DIFFUSE_TEXTURE = 0,
@@ -25,8 +25,6 @@ namespace JustAnotherUser {
         private DAZCharacterSelector _dazCharacterSelector;
         private string decalMakerId;
         private List<string> _decalmakerProgressStorables;
-        
-        private List<DAZMorph> _morphs;
 
         private PresetData _origin;
         private PresetData _destiny;
@@ -37,6 +35,12 @@ namespace JustAnotherUser {
         private bool _decalIsLoading = false;
 
         private string _baseName;
+
+        private AdjustableElement _globalSlider,
+                                _texturesSlider,
+                                _morphsSlider,
+                                _genitalsSlider;
+        private RangeTriggerElement _dickGone;
 
         private JSONStorable decalmakerStorable {
             get {
@@ -78,7 +82,6 @@ namespace JustAnotherUser {
 
             this._ui = new GenderSwapperUI(this);
             this._ui.SetupUI();
-            this._ui.SetOnSliderChange(SetProgress);
             this._ui.SetLoadPresetButtonEvent((val) => {
                 try {
                     this._origin.RestoreFromAppearancePreset(GetFileName(val,"vap"), SuperController.singleton.LoadJSON(val).AsObject);
@@ -114,14 +117,38 @@ namespace JustAnotherUser {
             UVData.Load(this);
 
             // disable `Hide Female Gens`
-            JSONStorable af = this.alternativeFutaStorable;
-            if (af != null) {
-                JSONClass afJson = af.GetJSON();
-                afJson["Hide Female Gens"].AsBool = false;
-                af.RestoreFromJSON(afJson);
+            try {
+                JSONStorable af = this.alternativeFutaStorable;
+                if (af != null) {
+                    JSONClass afJson = af.GetJSON();
+                    afJson["Hide Female Gens"].AsBool = false;
+                    af.RestoreFromJSON(afJson);
+                }
+            } catch (Exception ex) {
+                SuperController.LogError(ex.ToString());
             }
 
             StartCoroutine(LoadDataOnceAllFinishes());
+        }
+
+        private static void SetPluginEnabled(JSONStorable p, bool isEnabled) {
+            if (p == null) return;
+
+            try {
+                JSONClass afJson = p.GetJSON();
+                afJson["enabled"].AsBool = isEnabled;
+                p.RestoreFromJSON(afJson);
+            } catch (Exception ex) {
+                SuperController.LogError(ex.ToString());
+            }
+        }
+
+        private void ClearSliders() {
+            this._globalSlider = new RangeAdjustableElement("progress", value: (this._globalSlider == null) ? 0f : this._globalSlider.GetValue()); // the value will be set on the UI load
+            this._texturesSlider = new RangeAdjustableElement("textures", 1f, 0f, superelement: this._globalSlider); // as the base textures are the destiny and the decals the source we need the decals at 100% on value 0
+            this._morphsSlider = new RangeAdjustableElement("morphs", superelement: this._globalSlider);
+            this._genitalsSlider = null;
+            this._dickGone = null;
         }
 
         private IEnumerator LoadDataOnceAllFinishes() {
@@ -169,28 +196,6 @@ namespace JustAnotherUser {
             }
 
             return null; // none
-        }
-
-        public void SetProgress(float val) {
-            if (!this._origin.isValid || !this._destiny.isValid) return; // we need both
-            
-            List<MorphValue> result = MorphHelper.LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), val);
-            foreach (var entry in result) {
-                MorphHelper.SetMorphValue(MorphHelper.FindMorphByIDGivenGender(this._dazCharacterSelector, entry.id, entry.isMaleMorph), entry.value);
-            }
-
-            if (IsFemaleWithPenis()) {
-                if (val >= 0.99f) this.alternativeFutaStorable.enabled = false;
-                else this.alternativeFutaStorable.enabled = true;
-            }
-
-            JSONStorable decalMakerStorable = this.decalmakerStorable;
-            if (decalMakerStorable == null) return;
-            lock (this._decalIsLoadingSync) {
-                foreach (string storable in this._decalmakerProgressStorables) {
-                    decalMakerStorable.SetFloatParamValue(storable, 1.0f - val); // as we're assigning the source here, 0% progress is 100% source, and 100% progress 0% source
-                }
-            }
         }
 
         public void SpawnPenis() {
@@ -306,16 +311,28 @@ namespace JustAnotherUser {
         }
         
 		public override JSONClass GetJSON(bool includePhysical = true, bool includeAppearance = true, bool forceStore = false) {
+            AdjustableElementsGenderSwapperUI ui = this._ui.GetSubUI();
+            JSONClass uiJson = ui.GetJSON();
+            uiJson["progress"].AsFloat = this._globalSlider.GetValue();
+            ui.Clear(); // de-register params
+
             JSONClass jc = base.GetJSON(includePhysical, includeAppearance, forceStore);
+            jc["adjustableElements"] = uiJson;
             if (includePhysical || forceStore) {
                 jc["origin"] = this._origin.GetJSON(this.subScenePrefix);
                 jc["destiny"] = this._destiny.GetJSON(this.subScenePrefix);
             }
+
+            // we've de-registered the params; register them again
+            ui.RestoreFromJSON(uiJson);
+            this.UpdateAdjustableElements();
+            this.LoadUIData();
+
             return jc;
         }
 
-        public override void LateRestoreFromJSON(JSONClass jc, bool restorePhysical, bool restoreAppearance, bool setMissingToDefault) {
-            base.LateRestoreFromJSON(jc, restorePhysical, restoreAppearance, setMissingToDefault);
+        public override void RestoreFromJSON(JSONClass jc, bool restorePhysical, bool restoreAppearance, JSONArray presetAtoms, bool setMissingToDefault) {
+            base.RestoreFromJSON(jc, restorePhysical, restoreAppearance, presetAtoms, setMissingToDefault);
 
             if (!this.physicalLocked && restorePhysical) {
                 this._origin = new PresetData();
@@ -324,7 +341,12 @@ namespace JustAnotherUser {
                 this._origin.RestoreFromJSON(jc["origin"].AsObject, this.subScenePrefix, this.mergeRestore, setMissingToDefault);
                 this._destiny.RestoreFromJSON(jc["destiny"].AsObject, this.subScenePrefix, this.mergeRestore, setMissingToDefault);
 
+                this._ui.GetSubUI().RestoreFromJSON(jc["adjustableElements"]?.AsObject);
+
                 this.LoadData(); // now that we have the origin/target, update the UI
+
+                this._globalSlider.SetValue(jc["adjustableElements"]?.AsObject["progress"]?.AsFloat);
+                this._ui.UpdateSliders(this._globalSlider);
             }
         }
 
@@ -348,30 +370,59 @@ namespace JustAnotherUser {
                     this._destiny.LoadTexturesToAtom(textures);
                     t.RestoreFromJSON(textures);
                 }
-
-                if (GetAlternativeFuta() != null) {
-                    // as we may have reloaded the skin, reload the penis
-                    this.alternativeFutaStorable.enabled = false;
-                    if (this._ui.GetSliderProgress() < 0.99f) this.alternativeFutaStorable.enabled = true;
-                }
             }
-            
+
+            this.UpdateAdjustableElements();
             this.LoadUIData();
 
+            if (GetAlternativeFuta() != null) {
+                // as we may have reloaded the skin, reload the penis
+                SetPluginEnabled(this.alternativeFutaStorable, false);
+                if (this._dickGone == null || this._dickGone.GetValue() < this._dickGone.GetTriggerValue()) SetPluginEnabled(this.alternativeFutaStorable, true);
+            }
+
             // update morphs %
-            this.LoadMorphs(this._ui.GetSliderProgress());
+            this.LoadMorphs();
 
             // load the origin decal texture
-            StartCoroutine(this.LoadDecalMaker(this._ui.GetSliderProgress(), retryIfFail));
+            StartCoroutine(this.LoadDecalMaker(retryIfFail));
+        }
+
+        private void UpdateAdjustableElements() {
+            this.ClearSliders();
+            // textures slider loaded in `LoadDecalMaker`
+            if (this.IsFemaleWithPenis()) {
+                this._genitalsSlider = new RangeAdjustableElement("genitals", superelement: this._morphsSlider);
+                this._dickGone = new RangeTriggerElement("dick gone", 0.99f,
+                        () => SetPluginEnabled(this.alternativeFutaStorable, true),
+                        () => SetPluginEnabled(this.alternativeFutaStorable, false),
+                        superelement: this._genitalsSlider);
+            }
+            string[] genitalsMorphs = new string[] { "Penis Length", "Sh_Girth_XL", "Sh_Height", "WeebU.My_morphs.3:/Custom/Atom/Person/Morphs/male_genitalia/extra/bigballs.vmi" };
+
+            // morphs
+            Dictionary<string, float> originHash = MorphHelper.GetMorphsHash(this.GetMorphs(false)),
+                                    targetHash = MorphHelper.GetMorphsHash(this.GetMorphs(true));
+            foreach (string morphAndGender in originHash.Keys.Union(targetHash.Keys)) {
+                // the last character of `morphAndGender` is the gender
+                string morph = morphAndGender.Remove(morphAndGender.Length - 1);
+                bool isMaleMorph = morphAndGender.EndsWith("m");
+
+                float from = (originHash.ContainsKey(morphAndGender) ? originHash[morphAndGender] : 0.0f),
+                    to = (targetHash.ContainsKey(morphAndGender) ? targetHash[morphAndGender] : 0.0f);
+
+                new MorphAdjustableElement(MorphHelper.FindMorphByIDGivenGender(this._dazCharacterSelector, morph, isMaleMorph), from, to,
+                        superelement: (this.IsFemaleWithPenis() && genitalsMorphs.Contains(morph)) ? this._genitalsSlider : this._morphsSlider);
+            }
         }
 
         /**
          * Loads the morphs into the character
          */
-        private void LoadMorphs(float progress) {
+        private void LoadMorphs() {
             if (!this._origin.isValid || !this._destiny.isValid) return; // we need both
             
-            List<MorphValue> result = MorphHelper.LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), progress);
+            List<MorphValue> result = MorphHelper.LeapMorphs(this.GetMorphs(false), this.GetMorphs(true), 0f); // the progress will be set after, by the AdjustableElements
 
             this._dazCharacterSelector.morphsControlMaleUI.ZeroAll();
             this._dazCharacterSelector.morphsControlFemaleUI.ZeroAll();
@@ -388,7 +439,7 @@ namespace JustAnotherUser {
             if (areMorphsOnOtherGender) this._dazCharacterSelector.SetBoolParamValue(this._destiny.isMale ? "useFemaleMorphsOnMale" : "useMaleMorphsOnFemale", true);
         }
         
-        private IEnumerator LoadDecalMaker(float progress = 0f, bool retryIfFail = false) {
+        private IEnumerator LoadDecalMaker(bool retryIfFail = false) {
             bool isYours = false;
             lock (this._decalIsLoadingSync) {
                 isYours = !this._decalIsLoading;
@@ -426,13 +477,21 @@ namespace JustAnotherUser {
                         cls["Nipple Cutouts ON"].AsBool = false;
                         
                         // @pre the texture must be the same sex as the atom
-                        LoadOriginTexturesIntoDecalMaker(cls, texture, progress);
+                        LoadOriginTexturesIntoDecalMaker(cls, texture);
 
                         this.decalmakerStorable.CallAction("ClearAll"); //removes any existing loaded decals
                         this.decalmakerStorable.RestoreFromJSON(cls);
                         this.decalmakerStorable.CallAction("PerformLoad"); //load the data from the _savedData variable
 
                         GetDecalMakerStorablesIds(cls);
+
+                        // update GenderSwapper UI sliders
+                        this._texturesSlider.Clear();
+                        foreach (string storable in this._decalmakerProgressStorables) {
+                            new StorableAdjustableElement(this.decalmakerStorable, storable, superelement: this._texturesSlider);
+                        }
+
+                        LoadUIData(); // re-update the UI
                     } catch (Exception ex) {
                         exception = ex;
                     }
@@ -449,7 +508,7 @@ namespace JustAnotherUser {
                 if (retryIfFail) {
                     // try again
                     yield return new WaitForSeconds(0.5f);
-                    StartCoroutine(this.LoadDecalMaker(progress, retryIfFail));
+                    StartCoroutine(this.LoadDecalMaker(retryIfFail));
                 }
             }
         }
@@ -471,6 +530,7 @@ namespace JustAnotherUser {
                 this._ui.SetMorphList(this.MorphListToString(true), true);
                 this._ui.SetTextureList(this._destiny.texture.ToString(), true);
             }
+            this._ui.UpdateSliders(this._globalSlider);
         }
 
         private string MorphListToString(bool target) {
