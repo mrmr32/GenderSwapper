@@ -10,7 +10,7 @@ using static UnityEngine.UI.Image;
 
 namespace JustAnotherUser {
     public class GenderSwapper : MVRScript {
-        private static readonly string VERSION = "0.5";
+        private static readonly string VERSION = "0.5.1";
         private static readonly int UUID_LENGTH = 8;
 
         public static readonly int DIFFUSE_TEXTURE = 0,
@@ -114,7 +114,7 @@ namespace JustAnotherUser {
                 // TODO the label is removed; fix it
             }
 
-            UVData.Load(this);
+            UVData.Load();
 
             // disable `Hide Female Gens`
             try {
@@ -311,22 +311,26 @@ namespace JustAnotherUser {
         }
         
 		public override JSONClass GetJSON(bool includePhysical = true, bool includeAppearance = true, bool forceStore = false) {
-            AdjustableElementsGenderSwapperUI ui = this._ui.GetSubUI();
-            JSONClass uiJson = ui.GetJSON();
-            uiJson["progress"].AsFloat = this._globalSlider.GetValue();
-            ui.Clear(); // de-register params
-
             JSONClass jc = base.GetJSON(includePhysical, includeAppearance, forceStore);
-            jc["adjustableElements"] = uiJson;
-            if (includePhysical || forceStore) {
-                jc["origin"] = this._origin.GetJSON(this.subScenePrefix);
-                jc["destiny"] = this._destiny.GetJSON(this.subScenePrefix);
-            }
+            try {
+                AdjustableElementsGenderSwapperUI ui = this._ui.GetSubUI();
+                JSONClass uiJson = ui.GetJSON();
+                uiJson["progress"].AsFloat = this._globalSlider.GetValue();
+                ui.Clear(); // de-register params
 
-            // we've de-registered the params; register them again
-            ui.RestoreFromJSON(uiJson);
-            this.UpdateAdjustableElements();
-            this.LoadUIData();
+                jc["adjustableElements"] = uiJson;
+                if (includePhysical || forceStore) {
+                    jc["origin"] = this._origin.GetJSON(this.subScenePrefix);
+                    jc["destiny"] = this._destiny.GetJSON(this.subScenePrefix);
+                }
+
+                // we've de-registered the params; register them again
+                ui.RestoreFromJSON(uiJson);
+                this.UpdateAdjustableElements();
+                this.LoadUIData();
+            } catch (Exception ex) {
+                SuperController.LogError(ex.ToString());
+            }
 
             return jc;
         }
@@ -335,18 +339,22 @@ namespace JustAnotherUser {
             base.RestoreFromJSON(jc, restorePhysical, restoreAppearance, presetAtoms, setMissingToDefault);
 
             if (!this.physicalLocked && restorePhysical) {
-                this._origin = new PresetData();
-                this._destiny = new PresetData();
+                try {
+                    this._origin = new PresetData();
+                    this._destiny = new PresetData();
 
-                this._origin.RestoreFromJSON(jc["origin"].AsObject, this.subScenePrefix, this.mergeRestore, setMissingToDefault);
-                this._destiny.RestoreFromJSON(jc["destiny"].AsObject, this.subScenePrefix, this.mergeRestore, setMissingToDefault);
+                    this._origin.RestoreFromJSON(jc["origin"].AsObject, this.subScenePrefix, this.mergeRestore, setMissingToDefault);
+                    this._destiny.RestoreFromJSON(jc["destiny"].AsObject, this.subScenePrefix, this.mergeRestore, setMissingToDefault);
 
-                this._ui.GetSubUI().RestoreFromJSON(jc["adjustableElements"]?.AsObject);
+                    this._ui.GetSubUI().RestoreFromJSON(jc["adjustableElements"]?.AsObject);
 
-                this.LoadData(); // now that we have the origin/target, update the UI
+                    this.LoadData(); // now that we have the origin/target, update the UI
 
-                this._globalSlider.SetValue(jc["adjustableElements"]?.AsObject["progress"]?.AsFloat);
-                this._ui.UpdateSliders(this._globalSlider);
+                    this._globalSlider.SetValue(jc["adjustableElements"]?.AsObject["progress"]?.AsFloat);
+                    this._ui.UpdateSliders(this._globalSlider);
+                } catch (Exception ex) {
+                    SuperController.LogError(ex.ToString());
+                }
             }
         }
 
@@ -491,7 +499,7 @@ namespace JustAnotherUser {
                             new StorableAdjustableElement(this.decalmakerStorable, storable, superelement: this._texturesSlider);
                         }
 
-                        LoadUIData(); // re-update the UI
+                        this._ui.UpdateSliders(this._globalSlider); // re-update the UI
                     } catch (Exception ex) {
                         exception = ex;
                     }
