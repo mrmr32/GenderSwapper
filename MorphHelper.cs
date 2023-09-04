@@ -119,7 +119,14 @@ namespace JustAnotherUser {
             Dictionary<string, float> r = new Dictionary<string, float>();
             if (morphs == null) return r;
 
-            foreach (var e in morphs) r.Add(e.id + (e.isMaleMorph ? "m" : "f"), e.value);
+            foreach (var e in morphs) {
+                try {
+                    r.Add(e.id + (e.isMaleMorph ? "m" : "f"), e.value);
+                } catch (ArgumentException) {
+                    SuperController.LogError("Warning: duplicated morph (" + e.id + "; " + (e.isMaleMorph ? "male" : "female") + ")");
+                }
+            }
+
             return r;
         }
 
